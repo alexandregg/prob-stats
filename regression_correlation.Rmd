@@ -1,0 +1,242 @@
+---
+title: "Regressão e Correlação"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Correlação
+
+$$ r_{x,y} = \frac{cov(x,y)}{\sqrt{var(x)*var(y)}}$$
+```{r}
+data(anscombe) #by Francis Anscombe in 1973
+data <- anscombe %>% gather() %>% separate(key, into=c("axis","set"), sep=1)
+xs <- filter(data, axis == "x") %>% select(-axis) %>% rename(x = value)
+ys <- filter(data, axis == "y") %>% select(-axis) %>% rename(y = value)
+dataset <- bind_cols(xs, ys) %>% select(-set1)
+dataset %>% group_by(set) %>% summarise(n(), mean(x), sd(x), mean(y), sd(y), cor(x,y))
+```
+
+```{r}
+dataset %>% ggplot(aes(x,y)) + geom_point() + 
+  geom_line(size=0.1) + 
+  facet_wrap(~ set)
+```
+
+
+## Regressão
+
+```{r}
+dataset %>% ggplot(aes(x,y)) + geom_point() + 
+  geom_line(size=0.1) + 
+  geom_smooth(method = "lm", se = FALSE, size = 0.5) + ## Acrescentado a regressão
+  facet_wrap(~ set)
+```
+
+
+### Modelo matemático
+
+Modelo estatítico genérico:
+
+$$ Y = f(X) + \epsilon $$
+
+Modelo linear genérico:
+
+$$ Y = \beta_0 + \beta_1*X + \epsilon, \epsilon \sim N(0,\sigma_{\epsilon}^2)$$
+
+Modelo com estimativa dos coeficientes:
+
+$$ Y = \hat{\beta_0} + \hat{\beta_1}*X + \epsilon$$
+
+Residuos:
+
+$$ e = Y - \hat{Y} $$
+
+### Método dos mínimos quadrados
+
+* Fácil, determinístico e solução única
+* Sempre passa pelo ponto médio $\bar{x}, \bar{y}$.
+* Soma dos residuos é igual a zero
+
+Procedimento computacional:
+1. Dados _n_ pares de observações $x_i,y_i$.
+2. Encontre $\hat{\beta_0}, \hat{\beta_1}$ que minimiza a função $\sum_{i=1}^n{e_i^2}$
+
+Procedimento estatistíco:
+
+$$ \hat{\beta_1} = r_{X,Y} \frac{s_Y}{s_X}$$
+onde $r_{X,Y}$ é a correlação entre X e Y, e $s_X, s_Y$ são os desvios-padrão correspondentes.
+
+$$ \hat{\beta_0} = \bar{Y}- \hat{\beta_1}\bar{X} $$
+### Outros tipos de regressão
+
+* Least squares
+* Weighted
+* Generalized
+* Nonparametric
+* Ridge
+* Bayesian
+
+### Regressão a média
+
+A experiência de Galton mostra que filhos de pais muito altos tendem a ser mais baixos que seus pais, mas maiores que a média. Isto pode ser observado pelo coeficiente angular da regressão que é menor que o esperado.
+
+```{r}
+load("data/galton-stata11.RData") #Harvard Dataverse
+Galton_men <- filter(x, gender == "M")
+ggplot(data = Galton_men, aes(x = father, y = height)) +
+  geom_point() + 
+  geom_abline(slope = 1, intercept = 0) + 
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+> "Regression to the mean is so powerful that once-in-a-generation talent basically never sires once-in-a-generation talent. It explains why Michael Jordan’s sons were middling college basketball players and Jakob Dylan wrote two good songs. It is why there are no American parent-child pairs among Hall of Fame players in any major professional sports league."  Eonomist Seth Stephens-Davidowitz published in The New York Times in 2015.
+
+### Treinando o modelo (fit)
+
+```{r}
+library(openintro)
+data("bdims")
+ggplot(bdims, aes(hgt,wgt)) + geom_point() + geom_smooth(method = "lm")
+```
+
+```{r}
+mod <- lm(wgt ~ hgt, data=bdims)
+coef(mod)
+```
+```{r}
+summary(mod)
+```
+
+```{r}
+mean(residuals(mod))
+```
+
+```{r}
+mean(fitted.values(mod)) == mean(bdims$wgt)
+```
+
+### Utilizando o modelo
+
+```{r}
+library(broom)
+(df <- as_data_frame(augment(mod)))
+```
+
+```{r}
+alex <- data_frame(hgt = 174)
+predict(mod, newdata = alex)
+```
+
+
+### Avaliando o modelo
+
+SSE - Sum Squared Errors 
+
+$$ SSE =  \sum_ie_i^2 = (n-1) Var_e$$ 
+Díficil de interpretar
+
+```{r}
+(SSE <- sum(residuals(mod)^2))
+```
+
+RMSE - Root Mean Square Error or Residual Standard Error
+
+Desvio padrão dos residuos
+
+$$ RMSE = \sqrt{ \frac{\sum_ie_i^2}{d.f.} } = \sqrt{ \frac{SSE}{n-2}}$$ 
+```{r}
+summary(mod)
+```
+```{r}
+(RMSE <- sqrt(sum(residuals(mod)^2)/df.residual(mod)))
+```
+
+### Comparando modelos
+
+Modelo nulo
+
+$$ \hat{Y_{nulo}} = \bar{Y} $$
+
+SST Sum squared totals
+
+```{r}
+(SST <- sum((df$wgt-mean(df$wgt))^2))
+```
+
+Coeficiente de determinação 
+
+$$ R^2 = 1 - \frac{SSE}{SST} = 1 - \frac{Var(e)}{Var(y)} $$
+
+Considerando apenas duas variáveis
+
+$$R^2 = r_{x,y}^2$$
+
+Modelo nulo possui $R^2$ igual a zero, pois SST = SSE.  
+
+
+> "Essentially, all models are wrong, but some are useful." George Box
+
+### Resíduos, Leverage e Distancia de Cook
+
+$$ h_i = \frac{1}{n} + \frac{(x_i-\bar{x})^2}{\sum_{i=1}^n(x_i-\bar{x})^2} $$ 
+
+> Interpretação: Quanto mais distante do valor esperado, maior a alavancagem.
+
+
+```{r}
+anscombe_mod <- dataset %>% split(f=dataset$set, drop = TRUE) %>%
+  map(lm, formula = y ~ x) %>% map(augment) %>% 
+  bind_rows(.id = "set") %>% select(-.rownames)
+```
+
+```{r}
+a <- ggplot(anscombe_mod, aes(x, y)) + geom_point() + 
+  facet_wrap(~ set, ncol=4) + 
+  geom_line(aes(y=.fitted)) 
+b <- ggplot(anscombe_mod, aes(x)) +   
+  facet_wrap(~ set, ncol=4) + 
+  geom_line(aes(y=.resid), color="darkgreen") +
+  geom_line(aes(y=.hat), color="red") +
+  geom_line(aes(y=.cooksd), color="blue")
+library(cowplot)
+plot_grid(a,b,ncol = 1)
+```
+
+### Outliers
+
+Remover ou não remover? Justificar. Ser cético e transparente. Cuidado. Melhor coeficiente não é justificativa. Exemplos de justificativas:
+
+* Medida incorreta
+* Dado não representativo
+
+```{r}
+df3 <- filter(anscombe_mod, set == 3) 
+ggplot(df3, aes(x,y)) + geom_point() + 
+  geom_smooth(method="lm", color="red") +
+  geom_smooth(data = filter(df3, y < 10), method="lm") +
+  ggtitle("Anscombe dataset 3")
+```
+
+# Regressão linear multipla
+
+$$ y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \epsilon, \; \epsilon \sim N(0,\sigma_{\epsilon}^2)$$ 
+
+```{r}
+data("mpg")
+mpg
+```
+
+```{r}
+mod <- lm(hwy ~ displ + factor(year), data = mpg)
+ggplot(augment(mod), aes(displ, hwy, color = factor.year.)) + geom_point() +
+  geom_line(aes(y=.fitted))
+```
+```{r}
+mod
+```
+
+

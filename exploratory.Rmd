@@ -1,0 +1,119 @@
+---
+title: "Exploratory Data Analysis"
+author: "Alexandre Galiani Garmbis"
+date: "29/07/2018"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## United Nations Votes Dataset
+
+```{r}
+library(tidyverse)
+library(countrycode)
+votes_processed <- read_rds("data/votes.rds") %>%
+  filter(vote <= 3) %>%
+  mutate(year = session + 1945,
+         country = countrycode(ccode, "cown", "country.name"))
+```
+
+```{r}
+# Summarize by country: by_country
+by_year_country <- votes_processed %>%
+  group_by(country, year) %>%
+  summarize(total = n(),
+            percent_yes = mean(vote == 1))
+```
+
+
+```{r}
+countries <- c("United States", "United Kingdom",
+               "France", "Japan", "Brazil", "Israel",
+               "China", "South Korea", "Cuba")
+
+# Filtered by_year_country: filtered_6_countries
+filtered_6_countries <- by_year_country %>%
+  filter(country %in% countries)
+
+# Line plot of % yes over time faceted by country
+ggplot(filtered_6_countries, aes(year, percent_yes)) +
+  geom_line() + geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ country)
+```
+
+## Trends
+
+```{r}
+library(purrr)
+library(broom)
+
+# Perform a linear regression on each item in the data column
+slope_terms <- by_year_country %>%
+  nest() %>% 
+  mutate(model = map(data, ~ lm(percent_yes ~ year, data = .)),
+         tidied = map(model, tidy)) %>%
+  unnest(tidied) %>%
+  filter(term == "year") %>%
+  mutate(p.adjusted = p.adjust(p.value)) %>%
+  filter(p.adjusted < 0.05) 
+slope_terms %>% arrange(estimate)
+```
+
+## Votos por categoria
+
+me: Palestinian conflict
+nu: Nuclear weapons and nuclear material
+di: Arms control and disarmament
+hr: Human rights
+co: Colonialism
+ec: Economic development
+
+```{r, message=FALSE, warning=FALSE}
+votes_joined <- read_rds("data/descriptions.rds") %>%
+  inner_join(votes_processed, by = c("rcid", "session")) %>%
+  gather(topic_code, has_topic, me:ec) %>%
+  filter(has_topic == 1) %>%
+  mutate(topic = recode(topic_code,
+                        me = "Palestinian conflict",
+                        nu = "Nuclear weapons and material",
+                        di = "Arms control and disarmament",
+                        hr = "Human rights",
+                        co = "Colonialism",
+                        ec = "Economic development"))
+
+by_country_year_topic <- votes_joined %>% 
+  group_by(country, year, topic) %>%
+  summarize(total = n(), 
+            percent_yes = mean(vote == 1)) %>%
+  ungroup()
+
+country_topic_coefficients <- by_country_year_topic %>%
+  nest(-country, -topic) %>%
+  mutate(model = map(data, ~ lm(percent_yes ~ year, data = .)),
+         tidied = map(model, tidy)) %>%
+  unnest(tidied) %>%
+  filter(term == "year") %>%
+  mutate(p.adjusted = p.adjust(p.value)) %>%
+  filter(p.adjusted < 0.05)
+
+country_topic_coefficients %>% arrange(estimate)
+```
+
+
+```{r}
+countries <- c("United States", "United Kingdom",
+               "Brazil", "China")
+
+# Filtered by_year_country: filtered_6_countries
+filtered_4_countries <- by_country_year_topic %>%
+  filter(country %in% countries)
+
+# Line plot of % yes over time faceted by country
+ggplot(filtered_4_countries, aes(year, percent_yes, color = country)) +
+  geom_smooth(se = FALSE) + 
+  facet_wrap(~ topic)
+```
+

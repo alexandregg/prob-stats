@@ -1,0 +1,247 @@
+---
+title: "Sentiment Analysis"
+author: "Alexandre Galiani Garmbis"
+date: "17/09/2018"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidytext)
+```
+
+## Lexicons
+
+- *afinn* from Finn Årup Nielsen;
+- *bing* from Bing Liu and collaborators, and;
+- *nrc* from Saif Mohammad and Peter Turney.
+
+```{r}
+get_sentiments("afinn")
+```
+
+
+```{r}
+(bing <- get_sentiments("bing"))
+```
+
+```{r}
+nrc <- get_sentiments("nrc") 
+nrc %>% count(sentiment)
+```
+
+## Twitter data
+
+Tweets geocoded by US states:
+
+```{r}
+load("data/geocoded_tweets.rda")
+tweets_bing <- geocoded_tweets %>% inner_join(bing)
+tweets_bing %>% 
+  group_by(state, sentiment) %>%
+  summarize(freq = mean(freq)) %>%
+  spread(sentiment, freq) %>%
+  mutate(pos_ratio = positive/(positive + negative)) %>%
+  arrange(desc(pos_ratio))
+```
+
+## Shakespeare data
+
+### Transform the non-tidy text data to tidy text data
+```{r}
+load("data/shakespeare.rda")
+tidy_shakespeare <- shakespeare %>%
+  group_by(title) %>%
+  mutate(linenumber = row_number()) %>%
+  unnest_tokens(word, text) %>%
+  ungroup()
+
+tidy_shakespeare %>% 
+  count(word, sort = TRUE)
+```
+
+### Implement sentiment analysis with the "bing" lexicon
+```{r}
+shakespeare_sentiment <- tidy_shakespeare %>%
+  inner_join(get_sentiments("bing"))
+
+word_counts <- shakespeare_sentiment %>%
+  count(title, sentiment) 
+
+word_counts %>%
+  ggplot(aes(title, n, fill = sentiment)) +
+  geom_col(position = "fill") +
+  coord_flip()
+```
+
+### Top words by sentiment
+```{r}
+top_words <- word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n))
+
+ggplot(top_words, aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free") +  
+  coord_flip()
+```
+Obs.: Wilt is not a negative word in this context, neither hero a positive (proper name).  
+
+### Calculate a contribution for each word in each title
+  
+```{r}
+sentiment_contributions <- tidy_shakespeare %>%
+  # Count by title and word
+  count(title, word, sort = TRUE) %>%
+  # Implement sentiment analysis using the "afinn" lexicon
+  inner_join(get_sentiments("afinn")) %>%
+  # Group by title
+  group_by(title) %>%
+  # Calculate a contribution for each word in each title
+  mutate(contribution = n * score / sum(n)) %>%
+  anti_join(data_frame(word = c("no","yes","hero","wilt"))) %>%
+  arrange(desc(contribution)) %>%
+  filter(title == "The Tragedy of Macbeth")
+    
+sentiment_contributions
+```
+
+### Sentiment changes through the narrative arcs 
+
+```{r}
+tidy_shakespeare %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(title, type, index = linenumber %/% 100, sentiment) %>%
+  # Spread sentiment and n across multiple columns
+  spread(sentiment, n, fill = 0) %>%
+  # Use mutate to find net sentiment
+  mutate(sentiment = positive - negative) %>%
+  ggplot(aes(index, sentiment)) + geom_col(aes(fill = sentiment > 0)) +
+  facet_wrap(~ type, scales = "free_x") +
+  theme(legend.position = "none")
+```
+
+## Climate test data
+
+```{r}
+load("data/climate_text.rda")
+climate_text %>% 
+  unnest_tokens(word, text) %>%
+  inner_join(get_sentiments("bing")) %>%
+  ggplot(aes(station, fill = sentiment)) + 
+  geom_bar(position = "fill") +
+  coord_flip()
+```
+### Top 10 word for each sentiment (proper names excluded)
+```{r}
+climate_text %>% 
+  unnest_tokens(word, text) %>%
+  inner_join(get_sentiments("nrc"))  %>%
+  anti_join(data_frame(word = c("change", "gore", "trump"))) %>%
+  count(sentiment, word) %>%
+  group_by(sentiment) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ sentiment, scales = "free") +
+  coord_flip()
+```
+
+### Positiveness by time
+```{r}
+library(lubridate)
+
+climate_text %>% 
+  unnest_tokens(word, text) %>%
+  mutate(date = floor_date(show_date, unit = "6 months")) %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(station, date, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(positiveness = positive / (positive + negative)) %>%
+  ggplot(aes(date, positiveness)) +
+  geom_line() +
+  geom_smooth(method = "lm", se = FALSE, lty = 2) +
+  expand_limits(y = 0) +
+  facet_wrap(~station, ncol = 1)
+```
+
+## Pop song lyrics
+
+- rank, the rank a song achieved on the Billboard Year-End Hot 100,
+- song, the song's title,
+- artist, the artist who recorded the song,
+- year, the year the song reached the given rank on the Billboard chart, and
+- lyrics, the lyrics of the song.
+
+```{r}
+load("data/song_lyrics.rda")
+tidy_lyrics <- song_lyrics %>% 
+  unnest_tokens(word, lyrics)
+
+totals <- tidy_lyrics %>%
+  count(song) %>%
+  rename(total_words = n)
+
+lyric_sentiment <- tidy_lyrics %>%
+  left_join(totals, by = "song") %>%
+  inner_join(get_sentiments("nrc"))
+
+lyric_sentiment %>%
+  count(song, sentiment, sort = TRUE)
+```
+
+### What songs have the highest proportion of negative words?
+
+```{r}
+lyric_sentiment %>%
+    count(song, sentiment, total_words) %>%
+    mutate(percent = n / total_words) %>%
+    filter(sentiment == "negative") %>%
+    arrange(desc(percent))
+```
+
+### What songs have the highest proportion of positive words?
+
+```{r}
+lyric_sentiment %>%
+    count(song, sentiment, total_words) %>%
+    mutate(percent = n / total_words) %>%
+    filter(sentiment == "positive") %>%
+    arrange(desc(percent))
+```
+
+### How is positive sentiment changing over time?
+
+```{r}
+lyric_sentiment %>%
+    filter(sentiment == "positive") %>%
+    count(song, year, total_words) %>%
+    ungroup() %>%
+    mutate(percent = n / total_words,
+           decade = 10 * floor(year / 10)) %>%
+    ggplot(aes(as.factor(decade), percent, color = year)) +
+    scale_y_log10() +
+    geom_jitter(alpha = 0.1, width = 0.1)
+```
+
+```{r}
+positive_by_year <- lyric_sentiment %>%
+    filter(sentiment == "positive") %>%
+    # Count by song, year, and total number of words
+    count(song, year, total_words) %>%
+    ungroup() %>%
+    # Define a new column: percent
+    mutate(percent = n / total_words)
+
+# Fit a linear model with percent as the response and year as the predictor
+model_positive <- lm(percent ~ year, data = positive_by_year)
+
+# Use summary to see the results of the model fitting
+summary(model_positive)
+```
+
